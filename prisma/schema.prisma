@@ -1,0 +1,598 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============ ENUMS ============
+
+enum UserRole {
+  SUPER_ADMIN
+  BUSINESS_OWNER
+  MANAGER
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum ClientCategory {
+  RETAIL
+  WHOLESALE
+  RESTAURANT
+  ECOMMERCE
+  HEALTHCARE
+  EDUCATION
+  HOSPITALITY
+  FINANCE
+  TECHNOLOGY
+  MANUFACTURING
+  OTHER
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+  TRIAL
+}
+
+enum SubscriptionPlan {
+  FREE
+  BASIC
+  PREMIUM
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  PENDING
+  EXPIRED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CARD
+  MPESA
+  PAYPAL
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum ProductType {
+  POS
+  ECOMMERCE
+  INVENTORY
+  RESTAURANT
+  SCHOOL
+  CRM
+  ACCOUNTING
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  COMING_SOON
+}
+
+enum Permission {
+  VIEW_CLIENTS
+  CREATE_CLIENT
+  UPDATE_CLIENT
+  DELETE_CLIENT
+  VIEW_PRODUCTS
+  CREATE_PRODUCT
+  UPDATE_PRODUCT
+  DELETE_PRODUCT
+  VIEW_SUBSCRIPTIONS
+  CREATE_SUBSCRIPTION
+  UPDATE_SUBSCRIPTION
+  DELETE_SUBSCRIPTION
+  VIEW_USERS
+  CREATE_USER
+  UPDATE_USER
+  DELETE_USER
+  VIEW_SETTINGS
+  UPDATE_SETTINGS
+  VIEW_REPORTS
+  GENERATE_REPORTS
+}
+
+// ============ CORE TABLES ============
+
+model Client {
+  id              String            @id @default(cuid())
+  name            String
+  email           String            @unique
+  phone           String?
+  address         String?
+  city            String?
+  state           String?
+  country         String?
+  postalCode      String?
+  website         String?
+  logo            String?
+  category        ClientCategory    @default(OTHER)
+  status          ClientStatus      @default(PENDING)
+  subscriptionId  String?           @unique
+  subscription    Subscription?     // ← FIXED: No @relation here
+  settings        Json?             @default("{}")
+  metadata        Json?             @default("{}")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
+  
+  users           User[]
+  products        ClientProduct[]
+  invoices        Invoice[]
+  apiKeys         ApiKey[]
+  auditLogs       AuditLog[]
+  customizations  ClientCustomization[]
+  payments        Payment[]
+  apiLogs         ApiLog[]
+  notifications   Notification[]
+  webhooks        Webhook[]
+  
+  @@index([email])
+  @@index([status])
+  @@index([category])
+  @@index([subscriptionId])
+  @@map("clients")
+}
+
+model User {
+  id              String            @id @default(cuid())
+  email           String            @unique
+  password        String?
+  name            String
+  phone           String?
+  avatar          String?
+  role            UserRole          @default(EMPLOYEE)
+  status          UserStatus        @default(ACTIVE)
+  clientId        String            @map("client_id")
+  client          Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  lastLogin       DateTime?
+  emailVerified   DateTime?
+  refreshToken    String?
+  resetToken      String?
+  resetTokenExpiry DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
+  
+  sessions        Session[]
+  auditLogs       AuditLog[]
+  userPermissions UserPermission[]
+  userPreferences UserPreference?
+  notifications   Notification[]
+  
+  @@index([email])
+  @@index([clientId])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model Session {
+  id              String            @id @default(cuid())
+  userId          String            @map("user_id")
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token           String            @unique
+  expiresAt       DateTime
+  ipAddress       String?
+  userAgent       String?
+  isRevoked       Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ============ SUBSCRIPTION TABLES ============
+
+model Subscription {
+  id              String            @id @default(cuid())
+  clientId        String?           @unique @map("client_id")
+  client          Client?           @relation(fields: [clientId], references: [id])
+  plan            SubscriptionPlan  @default(FREE)
+  status          SubscriptionStatus @default(PENDING)
+  startDate       DateTime          @default(now())
+  endDate         DateTime?
+  autoRenew       Boolean           @default(true)
+  trialStart      DateTime?
+  trialEnd        DateTime?
+  billingCycle    String            @default("MONTHLY")
+  price           Decimal           @default(0)
+  currency        String            @default("USD")
+  features        Json?             @default("[]")
+  metadata        Json?             @default("{}")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
+  
+  subscriptionProducts SubscriptionProduct[]
+  invoices         Invoice[]
+  
+  @@index([clientId])
+  @@index([status])
+  @@index([plan])
+  @@index([endDate])
+  @@map("subscriptions")
+}
+
+model SubscriptionProduct {
+  id              String            @id @default(cuid())
+  subscriptionId  String            @map("subscription_id")
+  subscription    Subscription      @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  productId       String            @map("product_id")
+  product         Product           @relation(fields: [productId], references: [id])
+  quantity        Int               @default(1)
+  features        Json?             @default("[]")
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@unique([subscriptionId, productId])
+  @@index([subscriptionId])
+  @@index([productId])
+  @@map("subscription_products")
+}
+
+model Invoice {
+  id              String            @id @default(cuid())
+  invoiceNumber   String            @unique
+  clientId        String            @map("client_id")
+  client          Client            @relation(fields: [clientId], references: [id])
+  subscriptionId  String?           @map("subscription_id")
+  subscription    Subscription?     @relation(fields: [subscriptionId], references: [id])
+  amount          Decimal
+  currency        String            @default("USD")
+  status          PaymentStatus     @default(PENDING)
+  dueDate         DateTime
+  paidAt          DateTime?
+  items           Json              @default("[]")
+  metadata        Json?             @default("{}")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  payments        Payment[]
+  
+  @@index([clientId])
+  @@index([subscriptionId])
+  @@index([invoiceNumber])
+  @@index([status])
+  @@map("invoices")
+}
+
+model Payment {
+  id              String            @id @default(cuid())
+  paymentId       String?           @unique
+  invoiceId       String            @map("invoice_id")
+  invoice         Invoice           @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  clientId        String            @map("client_id")
+  client          Client            @relation(fields: [clientId], references: [id])
+  amount          Decimal
+  currency        String            @default("USD")
+  method          PaymentMethod     @default(CARD)
+  status          PaymentStatus     @default(PENDING)
+  reference       String?
+  gatewayResponse Json?             @default("{}")
+  metadata        Json?             @default("{}")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([invoiceId])
+  @@index([clientId])
+  @@index([status])
+  @@index([paymentId])
+  @@map("payments")
+}
+
+// ============ PRODUCT TABLES ============
+
+model Product {
+  id              String            @id @default(cuid())
+  name            String
+  slug            String            @unique
+  description     String?
+  type            ProductType       @default(POS)
+  status          ProductStatus     @default(ACTIVE)
+  icon            String?
+  color           String?
+  features        Json?             @default("[]")
+  isFeatured      Boolean           @default(false)
+  displayOrder    Int               @default(0)
+  metadata        Json?             @default("{}")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
+  
+  subscriptionProducts SubscriptionProduct[]
+  clientProducts     ClientProduct[]
+  productFeatures    ProductFeature[]
+  productPricing     ProductPricing[]
+  
+  @@index([slug])
+  @@index([type])
+  @@index([status])
+  @@map("products")
+}
+
+model ClientProduct {
+  id              String            @id @default(cuid())
+  clientId        String            @map("client_id")
+  client          Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  productId       String            @map("product_id")
+  product         Product           @relation(fields: [productId], references: [id])
+  isActive        Boolean           @default(true)
+  settings        Json?             @default("{}")
+  features        Json?             @default("[]")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@unique([clientId, productId])
+  @@index([clientId])
+  @@index([productId])
+  @@map("client_products")
+}
+
+model ProductFeature {
+  id              String            @id @default(cuid())
+  productId       String            @map("product_id")
+  product         Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  icon            String?
+  isPremium       Boolean           @default(false)
+  displayOrder    Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([productId])
+  @@map("product_features")
+}
+
+model ProductPricing {
+  id              String            @id @default(cuid())
+  productId       String            @map("product_id")
+  product         Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  plan            SubscriptionPlan  @default(FREE)
+  price           Decimal
+  currency        String            @default("USD")
+  billingCycle    String            @default("MONTHLY")
+  features        Json?             @default("[]")
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([productId])
+  @@index([plan])
+  @@map("product_pricing")
+}
+
+// ============ PERMISSION TABLES ============
+
+model RolePermission {
+  id              String            @id @default(cuid())
+  role            UserRole
+  permission      Permission
+  createdAt       DateTime          @default(now())
+  
+  @@unique([role, permission])
+  @@index([role])
+  @@map("role_permissions")
+}
+
+model UserPermission {
+  id              String            @id @default(cuid())
+  userId          String            @map("user_id")
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission      Permission
+  isGranted       Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@unique([userId, permission])
+  @@index([userId])
+  @@map("user_permissions")
+}
+
+// ============ SETTINGS & CONFIGURATION TABLES ============
+
+model ClientCustomization {
+  id              String            @id @default(cuid())
+  clientId        String            @map("client_id")
+  client          Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  theme           Json?             @default("{}")
+  branding        Json?             @default("{}")
+  features        Json?             @default("{}")
+  integrations    Json?             @default("{}")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@unique([clientId])
+  @@map("client_customizations")
+}
+
+model UserPreference {
+  id              String            @id @default(cuid())
+  userId          String            @unique @map("user_id")
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme           String            @default("light")
+  language        String            @default("en")
+  timezone        String            @default("UTC")
+  notifications   Json?             @default("{}")
+  dashboard       Json?             @default("{}")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@map("user_preferences")
+}
+
+// ============ API & INTEGRATION TABLES ============
+
+model ApiKey {
+  id              String            @id @default(cuid())
+  clientId        String            @map("client_id")
+  client          Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  name            String
+  key             String            @unique
+  hashedKey       String            @unique
+  permissions     Json?             @default("[]")
+  expiresAt       DateTime?
+  lastUsed        DateTime?
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
+  
+  apiLogs         ApiLog[]
+  
+  @@index([clientId])
+  @@index([key])
+  @@index([hashedKey])
+  @@map("api_keys")
+}
+
+model ApiLog {
+  id              String            @id @default(cuid())
+  clientId        String            @map("client_id")
+  client          Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  apiKeyId        String?           @map("api_key_id")
+  apiKey          ApiKey?           @relation(fields: [apiKeyId], references: [id])
+  endpoint        String
+  method          String
+  statusCode      Int
+  responseTime    Int
+  ipAddress       String?
+  userAgent       String?
+  requestBody     Json?
+  responseBody    Json?
+  errorMessage    String?
+  createdAt       DateTime          @default(now())
+  
+  @@index([clientId])
+  @@index([apiKeyId])
+  @@index([createdAt])
+  @@index([statusCode])
+  @@map("api_logs")
+}
+
+// ============ AUDIT & LOGGING TABLES ============
+
+model AuditLog {
+  id              String            @id @default(cuid())
+  clientId        String?           @map("client_id")
+  client          Client?           @relation(fields: [clientId], references: [id])
+  userId          String?           @map("user_id")
+  user            User?             @relation(fields: [userId], references: [id])
+  action          String
+  entityType      String
+  entityId        String
+  changes         Json?             @default("{}")
+  ipAddress       String?
+  userAgent       String?
+  metadata        Json?             @default("{}")
+  createdAt       DateTime          @default(now())
+  
+  @@index([clientId])
+  @@index([userId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ============ NOTIFICATION TABLES ============
+
+model Notification {
+  id              String            @id @default(cuid())
+  clientId        String?           @map("client_id")
+  client          Client?           @relation(fields: [clientId], references: [id])
+  userId          String            @map("user_id")
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String
+  title           String
+  message         String
+  link            String?
+  isRead          Boolean           @default(false)
+  readAt          DateTime?
+  createdAt       DateTime          @default(now())
+  
+  @@index([userId])
+  @@index([clientId])
+  @@index([isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ============ MISC TABLES ============
+
+model Webhook {
+  id              String            @id @default(cuid())
+  clientId        String            @map("client_id")
+  client          Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  url             String
+  secret          String?
+  events          String[]
+  isActive        Boolean           @default(true)
+  retryCount      Int               @default(3)
+  timeout         Int               @default(5000)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  webhookLogs     WebhookLog[]
+  
+  @@index([clientId])
+  @@map("webhooks")
+}
+
+model WebhookLog {
+  id              String            @id @default(cuid())
+  webhookId       String            @map("webhook_id")
+  webhook         Webhook           @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  event           String
+  payload         Json
+  response        Json?
+  statusCode      Int
+  error           String?
+  duration        Int
+  createdAt       DateTime          @default(now())
+  
+  @@index([webhookId])
+  @@index([createdAt])
+  @@map("webhook_logs")
+}
+
+model SystemConfig {
+  id              String            @id @default(cuid())
+  key             String            @unique
+  value           Json
+  description     String?
+  isPublic        Boolean           @default(false)
+  updatedBy       String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  @@index([key])
+  @@map("system_configs")
+}
